@@ -1,0 +1,23 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brmonitor"
+version = "0.1.0"
+description = "Claude Code burn rate实时监控Web服务"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+]
+
+[project.scripts]
+brmonitor = "brmonitor.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+brmonitor = ["public/*"]
