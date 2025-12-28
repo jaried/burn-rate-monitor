@@ -163,11 +163,11 @@
 
         function updateChart(data) {
             const times = data.data.map(d => d.minute);
-            const values = data.data.map(d => ({
-                value: d.input_tokens + d.output_tokens,
-                total: d.input_tokens + d.output_tokens,
-                cost: d.cost_usd
-            }));
+            const values = data.data.map(d => {
+                const total = d.input_tokens + d.output_tokens +
+                    (d.cache_creation_tokens || 0) + (d.cache_read_tokens || 0);
+                return { value: total, total: total, cost: d.cost_usd };
+            });
             chart.setOption({
                 xAxis: { data: times },
                 series: [{ data: values }]
@@ -176,11 +176,16 @@
 
         function updateStats(data) {
             const lastData = data.data[data.data.length - 1];
-            const currentTokens = lastData ? lastData.input_tokens + lastData.output_tokens : 0;
+            const currentTokens = lastData ? (
+                lastData.input_tokens + lastData.output_tokens +
+                (lastData.cache_creation_tokens || 0) + (lastData.cache_read_tokens || 0)
+            ) : 0;
+            const totalTokens = data.stats.total_input_tokens + data.stats.total_output_tokens +
+                (data.stats.total_cache_creation_tokens || 0) + (data.stats.total_cache_read_tokens || 0);
             document.getElementById('current-tokens').textContent =
                 currentTokens.toLocaleString();
             document.getElementById('total-tokens').textContent =
-                (data.stats.total_input_tokens + data.stats.total_output_tokens).toLocaleString();
+                totalTokens.toLocaleString();
             document.getElementById('peak-tokens').textContent =
                 data.stats.peak_tokens.toLocaleString();
             document.getElementById('total-cost').textContent =

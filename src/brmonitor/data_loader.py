@@ -16,6 +16,8 @@ class UsageEntry:
     model: str
     input_tokens: int
     output_tokens: int
+    cache_creation_tokens: int
+    cache_read_tokens: int
 
 
 def get_claude_data_dirs() -> list[Path]:
@@ -56,6 +58,8 @@ def parse_jsonl_line(line: str) -> UsageEntry | None:
         usage = message.get("usage", {})
         input_tokens = usage.get("input_tokens", 0)
         output_tokens = usage.get("output_tokens", 0)
+        cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
+        cache_read_tokens = usage.get("cache_read_input_tokens", 0)
 
         if input_tokens == 0 and output_tokens == 0:
             return None
@@ -71,6 +75,8 @@ def parse_jsonl_line(line: str) -> UsageEntry | None:
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
         )
         return entry
     except (json.JSONDecodeError, ValueError, KeyError):

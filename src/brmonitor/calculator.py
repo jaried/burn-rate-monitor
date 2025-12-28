@@ -15,6 +15,8 @@ class MinuteData:
     cost_usd: float
     input_tokens: int
     output_tokens: int
+    cache_creation_tokens: int
+    cache_read_tokens: int
     count: int
 
 
@@ -24,6 +26,8 @@ class Stats:
     total_cost: float
     total_input_tokens: int
     total_output_tokens: int
+    total_cache_creation_tokens: int
+    total_cache_read_tokens: int
     average_rate: float
     peak_rate: float
     peak_tokens: int
@@ -51,6 +55,8 @@ def aggregate_by_minute(entries: list[UsageEntry]) -> list[MinuteData]:
             minute_map[minute_key].cost_usd += entry.cost_usd
             minute_map[minute_key].input_tokens += entry.input_tokens
             minute_map[minute_key].output_tokens += entry.output_tokens
+            minute_map[minute_key].cache_creation_tokens += entry.cache_creation_tokens
+            minute_map[minute_key].cache_read_tokens += entry.cache_read_tokens
             minute_map[minute_key].count += 1
         else:
             minute_data = MinuteData(
@@ -59,6 +65,8 @@ def aggregate_by_minute(entries: list[UsageEntry]) -> list[MinuteData]:
                 cost_usd=entry.cost_usd,
                 input_tokens=entry.input_tokens,
                 output_tokens=entry.output_tokens,
+                cache_creation_tokens=entry.cache_creation_tokens,
+                cache_read_tokens=entry.cache_read_tokens,
                 count=1,
             )
             minute_map[minute_key] = minute_data
@@ -83,6 +91,8 @@ def calculate_stats(data: list[MinuteData]) -> Stats:
             total_cost=0.0,
             total_input_tokens=0,
             total_output_tokens=0,
+            total_cache_creation_tokens=0,
+            total_cache_read_tokens=0,
             average_rate=0.0,
             peak_rate=0.0,
             peak_tokens=0,
@@ -93,15 +103,22 @@ def calculate_stats(data: list[MinuteData]) -> Stats:
     total_cost = sum(d.cost_usd for d in data)
     total_input_tokens = sum(d.input_tokens for d in data)
     total_output_tokens = sum(d.output_tokens for d in data)
+    total_cache_creation_tokens = sum(d.cache_creation_tokens for d in data)
+    total_cache_read_tokens = sum(d.cache_read_tokens for d in data)
     duration_minutes = len(data)
     average_rate = total_cost / duration_minutes if duration_minutes > 0 else 0.0
     peak_rate = max(d.cost_usd for d in data)
-    peak_tokens = max(d.input_tokens + d.output_tokens for d in data)
+    peak_tokens = max(
+        d.input_tokens + d.output_tokens + d.cache_creation_tokens + d.cache_read_tokens
+        for d in data
+    )
 
     stats = Stats(
         total_cost=total_cost,
         total_input_tokens=total_input_tokens,
         total_output_tokens=total_output_tokens,
+        total_cache_creation_tokens=total_cache_creation_tokens,
+        total_cache_read_tokens=total_cache_read_tokens,
         average_rate=average_rate,
         peak_rate=peak_rate,
         peak_tokens=peak_tokens,
