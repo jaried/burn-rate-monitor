@@ -116,6 +116,29 @@
             color: #fff;
             border-color: #d97706;
         }
+        .metric-toggle {
+            display: inline-flex;
+            background: #eee;
+            border-radius: 4px;
+            padding: 2px;
+        }
+        .metric-btn {
+            background: transparent;
+            border: none;
+            color: #666;
+            padding: 6px 16px;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 13px;
+        }
+        .metric-btn:hover {
+            color: #333;
+        }
+        .metric-btn.active {
+            background: #d97706;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -152,6 +175,12 @@
         </div>
     </div>
     <div class="view-buttons">
+        <div class="metric-toggle">
+            <button class="metric-btn active" data-metric="tokens">Tokens</button>
+            <button class="metric-btn" data-metric="cost">费用</button>
+        </div>
+    </div>
+    <div class="view-buttons">
         <button class="view-btn active" data-view="current">当前</button>
         <button class="view-btn" data-view="today">今日</button>
         <button class="view-btn" data-view="24h">24小时</button>
@@ -159,6 +188,7 @@
     <script>
         const chart = echarts.init(document.getElementById('chart'));
         let currentView = 'current';
+        let currentMetric = 'tokens';
         const viewCache = {};
         const chartCache = {};
 
@@ -192,10 +222,14 @@
                         html += ' <span style="color:#999">(' + upstream + ')</span>';
                     }
                     html += '<br/>';
+                    const isCost = currentMetric === 'cost';
                     params.forEach(p => {
                         if (p.value > 0) {
+                            const valStr = isCost
+                                ? '$' + p.value.toFixed(4)
+                                : p.value.toLocaleString();
                             html += '<span style="color:' + p.color + '">●</span> ' +
-                                p.seriesName + ': ' + p.value.toLocaleString() + '<br/>';
+                                p.seriesName + ': ' + valStr + '<br/>';
                         }
                     });
                     return html;
@@ -234,9 +268,10 @@
                 return;
             }
 
-            // 使用缓存的chartOption
-            if (chartCache[currentView]) {
-                chart.setOption(chartCache[currentView], { replaceMerge: ['series'] });
+            // 使用缓存的chartOption（需要包含metric）
+            const cacheKey = currentView + '_' + currentMetric;
+            if (chartCache[cacheKey]) {
+                chart.setOption(chartCache[cacheKey], { replaceMerge: ['series'] });
                 return;
             }
 
@@ -274,6 +309,7 @@
                 return;
             }
 
+            const isCostMode = currentMetric === 'cost';
             const series = combos.map(combo => {
                 const [model, upstream] = combo.split('|');
                 const baseColor = MODEL_COLORS[model] || '#999';
@@ -286,6 +322,9 @@
                         x.model === model && (x.upstream || 'official') === upstream
                     );
                     if (!m) return 0;
+                    if (isCostMode) {
+                        return m.cost_usd || 0;
+                    }
                     return m.input_tokens + m.output_tokens +
                         (m.cache_creation_tokens || 0) + (m.cache_read_tokens || 0);
                 });
@@ -307,9 +346,15 @@
             const option = {
                 legend: { data: series.map(s => s.name) },
                 xAxis: { data: times },
+                yAxis: {
+                    axisLabel: {
+                        color: '#666',
+                        formatter: isCostMode ? '${value}' : '{value}'
+                    }
+                },
                 series: series
             };
-            chartCache[currentView] = option;
+            chartCache[cacheKey] = option;
             chart.setOption(option, { replaceMerge: ['series'] });
         }
 
@@ -361,7 +406,8 @@
                 } else {
                     data = await fetchData(currentView);
                     viewCache[currentView] = data;
-                    delete chartCache[currentView];
+                    delete chartCache[currentView + '_tokens'];
+                    delete chartCache[currentView + '_cost'];
                 }
                 updateChart(data);
                 updateStats(data);
@@ -375,6 +421,15 @@
                 document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
                 this.classList.add('active');
                 currentView = this.dataset.view;
+                refresh();
+            });
+        });
+
+        document.querySelectorAll('.metric-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.metric-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                currentMetric = this.dataset.metric;
                 refresh();
             });
         });
