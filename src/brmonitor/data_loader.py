@@ -56,10 +56,6 @@ MODEL_PRICING = {
         "input": 1.0, "output": 5.0,
         "cache_creation": 1.25, "cache_read": 0.1,
     },
-    "claude-3-5-haiku-20241022": {
-        "input": 1.0, "output": 5.0,
-        "cache_creation": 1.25, "cache_read": 0.1,
-    },
 }
 
 

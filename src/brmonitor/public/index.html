@@ -57,10 +57,37 @@
             padding: 20px;
             margin-bottom: 20px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            display: flex;
+            gap: 20px;
         }
         #chart {
-            width: 100%;
+            flex: 1;
             height: 400px;
+        }
+        .models-panel {
+            width: 200px;
+            border-left: 1px solid #eee;
+            padding-left: 20px;
+        }
+        .models-title {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 12px;
+        }
+        .model-item {
+            padding: 6px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .model-item:last-child {
+            border-bottom: none;
+        }
+        .model-name {
+            font-size: 12px;
+            color: #333;
+        }
+        .model-stats {
+            font-size: 11px;
+            color: #999;
         }
         .view-buttons {
             display: flex;
@@ -110,6 +137,10 @@
     </div>
     <div class="chart-container">
         <div id="chart"></div>
+        <div class="models-panel">
+            <div class="models-title">模型统计</div>
+            <div id="models-list"></div>
+        </div>
     </div>
     <div class="view-buttons">
         <button class="view-btn active" data-view="current">当前</button>
@@ -119,17 +150,26 @@
     <script>
         const chart = echarts.init(document.getElementById('chart'));
         let currentView = 'current';
+        const viewCache = {};
+        const chartCache = {};
+
+        const MODEL_COLORS = {
+            'claude-opus-4-5-20251101': '#8b5cf6',
+            'claude-sonnet-4-5-20250929': '#d97706',
+            'claude-sonnet-4-20250514': '#f59e0b',
+            'claude-haiku-4-5-20251001': '#10b981',
+            'claude-3-5-sonnet-20241022': '#ec4899'
+        };
 
         const chartOption = {
             backgroundColor: 'transparent',
             tooltip: {
-                trigger: 'axis',
-                formatter: function(params) {
-                    const p = params[0];
-                    const d = p.data;
-                    return p.name + '<br/>Tokens: ' + d.total.toLocaleString() +
-                           '<br/>费用: $' + d.cost.toFixed(4);
-                }
+                trigger: 'axis'
+            },
+            legend: {
+                data: [],
+                top: 0,
+                textStyle: { color: '#666' }
             },
             xAxis: {
                 type: 'category',
@@ -143,14 +183,7 @@
                 axisLabel: { color: '#666' },
                 splitLine: { lineStyle: { color: '#eee' } }
             },
-            series: [{
-                type: 'line',
-                data: [],
-                smooth: true,
-                areaStyle: { color: 'rgba(217, 119, 6, 0.2)' },
-                lineStyle: { color: '#d97706', width: 2 },
-                itemStyle: { color: '#d97706' }
-            }]
+            series: []
         };
 
         chart.setOption(chartOption);
@@ -162,16 +195,71 @@
         }
 
         function updateChart(data) {
-            const times = data.data.map(d => d.minute);
-            const values = data.data.map(d => {
-                const total = d.input_tokens + d.output_tokens +
-                    (d.cache_creation_tokens || 0) + (d.cache_read_tokens || 0);
-                return { value: total, total: total, cost: d.cost_usd };
+            if (!data.data || !data.data.length) {
+                return;
+            }
+
+            // 使用缓存的chartOption
+            if (chartCache[currentView]) {
+                chart.setOption(chartCache[currentView], { replaceMerge: ['series'] });
+                return;
+            }
+
+            // 按1分钟填充连续时间轴
+            const dataMap = {};
+            data.data.forEach(d => { dataMap[d.minute] = d; });
+
+            const firstTime = new Date(data.data[0].timestamp);
+            const lastTime = new Date(data.data[data.data.length - 1].timestamp);
+
+            const times = [];
+            const filledData = [];
+            for (let t = new Date(firstTime); t <= lastTime; t.setMinutes(t.getMinutes() + 1)) {
+                const hh = String(t.getHours()).padStart(2, '0');
+                const mm = String(t.getMinutes()).padStart(2, '0');
+                const minute = hh + ':' + mm;
+                times.push(minute);
+                filledData.push(dataMap[minute] || null);
+            }
+
+            // 收集所有模型
+            const modelSet = new Set();
+            data.data.forEach(d => {
+                (d.models || []).forEach(m => modelSet.add(m.model));
             });
-            chart.setOption({
+            const models = Array.from(modelSet);
+
+            if (!models.length) {
+                return;
+            }
+
+            const series = models.map(model => {
+                const color = MODEL_COLORS[model] || '#999';
+                const name = model.replace('claude-', '').replace(/-\d{8}$/, '');
+                const values = filledData.map(d => {
+                    if (!d) return 0;
+                    const m = (d.models || []).find(x => x.model === model);
+                    if (!m) return 0;
+                    return m.input_tokens + m.output_tokens +
+                        (m.cache_creation_tokens || 0) + (m.cache_read_tokens || 0);
+                });
+                return {
+                    name: name,
+                    type: 'line',
+                    data: values,
+                    smooth: true,
+                    lineStyle: { color: color, width: 2 },
+                    itemStyle: { color: color }
+                };
+            });
+
+            const option = {
+                legend: { data: series.map(s => s.name) },
                 xAxis: { data: times },
-                series: [{ data: values }]
-            });
+                series: series
+            };
+            chartCache[currentView] = option;
+            chart.setOption(option, { replaceMerge: ['series'] });
         }
 
         function updateStats(data) {
@@ -190,12 +278,41 @@
                 data.stats.peak_tokens.toLocaleString();
             document.getElementById('total-cost').textContent =
                 '$' + data.stats.total_cost.toFixed(2);
+            updateModels(data.stats.models || []);
         }
 
-        async function refresh() {
-            const data = await fetchData(currentView);
-            updateChart(data);
-            updateStats(data);
+        function updateModels(models) {
+            const container = document.getElementById('models-list');
+            if (!models.length) {
+                container.innerHTML = '<div class="model-item">暂无数据</div>';
+                return;
+            }
+            container.innerHTML = models.map(m => {
+                const tokens = m.input_tokens + m.output_tokens +
+                    (m.cache_creation_tokens || 0) + (m.cache_read_tokens || 0);
+                const name = m.model.replace('claude-', '').replace(/-\d{8}$/, '');
+                return '<div class="model-item">' +
+                    '<span class="model-name">' + name + '</span>' +
+                    '<span class="model-stats">' + tokens.toLocaleString() + ' / $' + m.cost_usd.toFixed(2) + '</span>' +
+                    '</div>';
+            }).join('');
+        }
+
+        async function refresh(forceRefresh = false) {
+            try {
+                let data;
+                if (!forceRefresh && viewCache[currentView]) {
+                    data = viewCache[currentView];
+                } else {
+                    data = await fetchData(currentView);
+                    viewCache[currentView] = data;
+                    delete chartCache[currentView];
+                }
+                updateChart(data);
+                updateStats(data);
+            } catch (e) {
+                console.error('refresh error:', e);
+            }
         }
 
         document.querySelectorAll('.view-btn').forEach(btn => {
@@ -209,7 +326,7 @@
 
         window.addEventListener('resize', () => chart.resize());
         refresh();
-        setInterval(refresh, 30000);
+        setInterval(() => refresh(true), 30000);
     </script>
 </body>
 </html>

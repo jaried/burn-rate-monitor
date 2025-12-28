@@ -8,6 +8,18 @@ from brmonitor.data_loader import UsageEntry
 
 
 @dataclass
+class ModelData:
+    """模型聚合数据"""
+    model: str
+    cost_usd: float
+    input_tokens: int
+    output_tokens: int
+    cache_creation_tokens: int
+    cache_read_tokens: int
+    count: int
+
+
+@dataclass
 class MinuteData:
     """分钟聚合数据"""
     minute: str
@@ -18,6 +30,7 @@ class MinuteData:
     cache_creation_tokens: int
     cache_read_tokens: int
     count: int
+    models: list[ModelData]
 
 
 @dataclass
@@ -32,6 +45,7 @@ class Stats:
     peak_rate: float
     peak_tokens: int
     duration_minutes: int
+    models: list[ModelData]
 
 
 @dataclass
@@ -42,26 +56,21 @@ class BurnRateResponse:
     stats: Stats
 
 
-def aggregate_by_minute(entries: list[UsageEntry]) -> list[MinuteData]:
-    """按分钟聚合数据"""
-    if not entries:
-        return []
-
-    minute_map: dict[str, MinuteData] = {}
-
+def _aggregate_models(entries: list[UsageEntry]) -> list[ModelData]:
+    """按模型聚合数据"""
+    model_map: dict[str, ModelData] = {}
     for entry in entries:
-        minute_key = entry.timestamp.strftime("%Y-%m-%d %H:%M")
-        if minute_key in minute_map:
-            minute_map[minute_key].cost_usd += entry.cost_usd
-            minute_map[minute_key].input_tokens += entry.input_tokens
-            minute_map[minute_key].output_tokens += entry.output_tokens
-            minute_map[minute_key].cache_creation_tokens += entry.cache_creation_tokens
-            minute_map[minute_key].cache_read_tokens += entry.cache_read_tokens
-            minute_map[minute_key].count += 1
+        model = entry.model or "unknown"
+        if model in model_map:
+            model_map[model].cost_usd += entry.cost_usd
+            model_map[model].input_tokens += entry.input_tokens
+            model_map[model].output_tokens += entry.output_tokens
+            model_map[model].cache_creation_tokens += entry.cache_creation_tokens
+            model_map[model].cache_read_tokens += entry.cache_read_tokens
+            model_map[model].count += 1
         else:
-            minute_data = MinuteData(
-                minute=entry.timestamp.strftime("%H:%M"),
-                timestamp=entry.timestamp.replace(second=0, microsecond=0),
+            model_data = ModelData(
+                model=model,
                 cost_usd=entry.cost_usd,
                 input_tokens=entry.input_tokens,
                 output_tokens=entry.output_tokens,
@@ -69,9 +78,51 @@ def aggregate_by_minute(entries: list[UsageEntry]) -> list[MinuteData]:
                 cache_read_tokens=entry.cache_read_tokens,
                 count=1,
             )
-            minute_map[minute_key] = minute_data
+            model_map[model] = model_data
+    result = sorted(model_map.values(), key=lambda x: x.cost_usd, reverse=True)
+    return result
 
-    result = list(minute_map.values())
+
+AGGREGATION_MINUTES = 1
+
+
+def aggregate_by_minute(entries: list[UsageEntry]) -> list[MinuteData]:
+    """按5分钟聚合数据"""
+    if not entries:
+        return []
+
+    minute_map: dict[str, dict] = {}
+
+    for entry in entries:
+        # 按5分钟取整
+        minute = (entry.timestamp.minute // AGGREGATION_MINUTES) * AGGREGATION_MINUTES
+        ts = entry.timestamp.replace(minute=minute, second=0, microsecond=0)
+        minute_key = ts.strftime("%Y-%m-%d %H:%M")
+        if minute_key not in minute_map:
+            minute_map[minute_key] = {
+                "minute": ts.strftime("%H:%M"),
+                "timestamp": ts,
+                "entries": [],
+            }
+        minute_map[minute_key]["entries"].append(entry)
+
+    result: list[MinuteData] = []
+    for minute_key, data in minute_map.items():
+        entries_in_minute = data["entries"]
+        models = _aggregate_models(entries_in_minute)
+        minute_data = MinuteData(
+            minute=data["minute"],
+            timestamp=data["timestamp"],
+            cost_usd=sum(e.cost_usd for e in entries_in_minute),
+            input_tokens=sum(e.input_tokens for e in entries_in_minute),
+            output_tokens=sum(e.output_tokens for e in entries_in_minute),
+            cache_creation_tokens=sum(e.cache_creation_tokens for e in entries_in_minute),
+            cache_read_tokens=sum(e.cache_read_tokens for e in entries_in_minute),
+            count=len(entries_in_minute),
+            models=models,
+        )
+        result.append(minute_data)
+
     result.sort(key=lambda x: x.timestamp)
     return result
 
@@ -97,6 +148,7 @@ def calculate_stats(data: list[MinuteData]) -> Stats:
             peak_rate=0.0,
             peak_tokens=0,
             duration_minutes=0,
+            models=[],
         )
         return stats
 
@@ -113,6 +165,28 @@ def calculate_stats(data: list[MinuteData]) -> Stats:
         for d in data
     )
 
+    model_map: dict[str, ModelData] = {}
+    for minute_data in data:
+        for m in minute_data.models:
+            if m.model in model_map:
+                model_map[m.model].cost_usd += m.cost_usd
+                model_map[m.model].input_tokens += m.input_tokens
+                model_map[m.model].output_tokens += m.output_tokens
+                model_map[m.model].cache_creation_tokens += m.cache_creation_tokens
+                model_map[m.model].cache_read_tokens += m.cache_read_tokens
+                model_map[m.model].count += m.count
+            else:
+                model_map[m.model] = ModelData(
+                    model=m.model,
+                    cost_usd=m.cost_usd,
+                    input_tokens=m.input_tokens,
+                    output_tokens=m.output_tokens,
+                    cache_creation_tokens=m.cache_creation_tokens,
+                    cache_read_tokens=m.cache_read_tokens,
+                    count=m.count,
+                )
+    models = sorted(model_map.values(), key=lambda x: x.cost_usd, reverse=True)
+
     stats = Stats(
         total_cost=total_cost,
         total_input_tokens=total_input_tokens,
@@ -123,6 +197,7 @@ def calculate_stats(data: list[MinuteData]) -> Stats:
         peak_rate=peak_rate,
         peak_tokens=peak_tokens,
         duration_minutes=duration_minutes,
+        models=models,
     )
     return stats
 
