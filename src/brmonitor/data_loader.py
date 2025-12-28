@@ -32,17 +32,41 @@ def get_claude_data_dirs() -> list[Path]:
 
 
 MODEL_PRICING = {
-    "claude-opus-4-5-20251101": {"input": 15.0, "output": 75.0},
-    "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
-    "claude-3-5-sonnet-20241022": {"input": 3.0, "output": 15.0},
-    "claude-3-5-haiku-20241022": {"input": 0.8, "output": 4.0},
+    "claude-opus-4-5-20251101": {
+        "input": 15.0, "output": 75.0,
+        "cache_creation": 18.75, "cache_read": 1.5,
+    },
+    "claude-sonnet-4-20250514": {
+        "input": 3.0, "output": 15.0,
+        "cache_creation": 3.75, "cache_read": 0.3,
+    },
+    "claude-3-5-sonnet-20241022": {
+        "input": 3.0, "output": 15.0,
+        "cache_creation": 3.75, "cache_read": 0.3,
+    },
+    "claude-3-5-haiku-20241022": {
+        "input": 0.8, "output": 4.0,
+        "cache_creation": 1.0, "cache_read": 0.08,
+    },
 }
 
 
-def _calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+def _calculate_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
+) -> float:
     """根据模型和token数计算成本"""
-    pricing = MODEL_PRICING.get(model, {"input": 3.0, "output": 15.0})
-    cost = (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+    default_pricing = {"input": 3.0, "output": 15.0, "cache_creation": 3.75, "cache_read": 0.3}
+    pricing = MODEL_PRICING.get(model, default_pricing)
+    cost = (
+        input_tokens * pricing["input"]
+        + output_tokens * pricing["output"]
+        + cache_creation_tokens * pricing.get("cache_creation", pricing["input"] * 1.25)
+        + cache_read_tokens * pricing.get("cache_read", pricing["input"] * 0.1)
+    ) / 1_000_000
     return cost
 
 
@@ -65,7 +89,12 @@ def parse_jsonl_line(line: str) -> UsageEntry | None:
             return None
 
         model = message.get("model", "")
-        cost_usd = _calculate_cost(model, input_tokens, output_tokens)
+        cost_usd = data.get("costUSD")
+        if cost_usd is None:
+            cost_usd = _calculate_cost(
+                model, input_tokens, output_tokens,
+                cache_creation_tokens, cache_read_tokens,
+            )
 
         utc_time = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
         timestamp = utc_time.astimezone().replace(tzinfo=None)
