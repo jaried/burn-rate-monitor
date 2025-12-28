@@ -53,12 +53,12 @@ MODEL_PRICING = {
         "cache_creation": 3.75, "cache_read": 0.3,
     },
     "claude-haiku-4-5-20251001": {
-        "input": 0.8, "output": 4.0,
-        "cache_creation": 1.0, "cache_read": 0.08,
+        "input": 1.0, "output": 5.0,
+        "cache_creation": 1.25, "cache_read": 0.1,
     },
     "claude-3-5-haiku-20241022": {
-        "input": 0.8, "output": 4.0,
-        "cache_creation": 1.0, "cache_read": 0.08,
+        "input": 1.0, "output": 5.0,
+        "cache_creation": 1.25, "cache_read": 0.1,
     },
 }
 
