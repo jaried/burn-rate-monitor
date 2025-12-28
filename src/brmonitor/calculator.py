@@ -110,6 +110,53 @@ def calculate_stats(data: list[MinuteData]) -> Stats:
     return stats
 
 
+SESSION_DURATION_HOURS = 5
+
+
+def _floor_to_hour(dt: datetime) -> datetime:
+    """向下取整到小时"""
+    result = dt.replace(minute=0, second=0, microsecond=0)
+    return result
+
+
+def _find_current_block_start(entries: list[UsageEntry]) -> datetime | None:
+    """找到当前活跃block的开始时间"""
+    if not entries:
+        return None
+
+    session_duration = timedelta(hours=SESSION_DURATION_HOURS)
+    sorted_entries = sorted(entries, key=lambda e: e.timestamp)
+    now = datetime.now()
+
+    current_block_start: datetime | None = None
+    last_entry_time: datetime | None = None
+
+    for entry in sorted_entries:
+        entry_time = entry.timestamp
+
+        if current_block_start is None:
+            current_block_start = _floor_to_hour(entry_time)
+            last_entry_time = entry_time
+            continue
+
+        time_since_block_start = entry_time - current_block_start
+        time_since_last_entry = entry_time - last_entry_time if last_entry_time else timedelta(0)
+
+        if time_since_block_start > session_duration or time_since_last_entry > session_duration:
+            current_block_start = _floor_to_hour(entry_time)
+
+        last_entry_time = entry_time
+
+    if current_block_start is None:
+        return None
+
+    block_end = current_block_start + session_duration
+    if now > block_end:
+        return None
+
+    return current_block_start
+
+
 def filter_entries_by_view(
     entries: list[UsageEntry],
     view: str,
@@ -125,7 +172,10 @@ def filter_entries_by_view(
     elif view == "24h":
         start = now - timedelta(hours=24)
     else:
-        start = now - timedelta(hours=1)
+        block_start = _find_current_block_start(entries)
+        if block_start is None:
+            return []
+        start = block_start
 
     result = [e for e in entries if e.timestamp >= start]
     return result
