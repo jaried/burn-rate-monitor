@@ -29,20 +29,42 @@ def get_claude_data_dirs() -> list[Path]:
     return dirs
 
 
+MODEL_PRICING = {
+    "claude-opus-4-5-20251101": {"input": 15.0, "output": 75.0},
+    "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
+    "claude-3-5-sonnet-20241022": {"input": 3.0, "output": 15.0},
+    "claude-3-5-haiku-20241022": {"input": 0.8, "output": 4.0},
+}
+
+
+def _calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """根据模型和token数计算成本"""
+    pricing = MODEL_PRICING.get(model, {"input": 3.0, "output": 15.0})
+    cost = (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+    return cost
+
+
 def parse_jsonl_line(line: str) -> UsageEntry | None:
     """解析单行JSONL"""
     try:
         data = json.loads(line)
         timestamp_str = data.get("timestamp")
-        cost_usd = data.get("costUSD", 0.0)
-        model = data.get("model", "")
-        input_tokens = data.get("inputTokens", 0)
-        output_tokens = data.get("outputTokens", 0)
-
         if not timestamp_str:
             return None
 
-        timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+        message = data.get("message", {})
+        usage = message.get("usage", {})
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+
+        if input_tokens == 0 and output_tokens == 0:
+            return None
+
+        model = message.get("model", "")
+        cost_usd = _calculate_cost(model, input_tokens, output_tokens)
+
+        utc_time = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+        timestamp = utc_time.astimezone().replace(tzinfo=None)
         entry = UsageEntry(
             timestamp=timestamp,
             cost_usd=cost_usd,

@@ -100,7 +100,7 @@ def filter_entries_by_view(
     if not entries:
         return []
 
-    now = datetime.now(entries[0].timestamp.tzinfo)
+    now = datetime.now()
 
     if view == "today":
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
