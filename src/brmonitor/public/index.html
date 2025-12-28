@@ -92,16 +92,20 @@
     </div>
     <div class="stats-container">
         <div class="stat-card">
-            <div class="label">当前速率</div>
-            <div class="value" id="current-rate">$0.00/min</div>
+            <div class="label">当前Tokens/min</div>
+            <div class="value" id="current-tokens">0</div>
         </div>
         <div class="stat-card">
-            <div class="label">总消耗</div>
+            <div class="label">总Tokens</div>
+            <div class="value" id="total-tokens">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">峰值Tokens/min</div>
+            <div class="value" id="peak-tokens">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">总费用</div>
             <div class="value" id="total-cost">$0.00</div>
-        </div>
-        <div class="stat-card">
-            <div class="label">峰值速率</div>
-            <div class="value" id="peak-rate">$0.00/min</div>
         </div>
     </div>
     <div class="chart-container">
@@ -122,7 +126,9 @@
                 trigger: 'axis',
                 formatter: function(params) {
                     const p = params[0];
-                    return p.name + '<br/>成本: $' + p.value.toFixed(4);
+                    const d = p.data;
+                    return p.name + '<br/>Tokens: ' + d.total.toLocaleString() +
+                           '<br/>费用: $' + d.cost.toFixed(4);
                 }
             },
             xAxis: {
@@ -134,7 +140,7 @@
             yAxis: {
                 type: 'value',
                 axisLine: { lineStyle: { color: '#ddd' } },
-                axisLabel: { color: '#666', formatter: '${value}' },
+                axisLabel: { color: '#666' },
                 splitLine: { lineStyle: { color: '#eee' } }
             },
             series: [{
@@ -157,7 +163,11 @@
 
         function updateChart(data) {
             const times = data.data.map(d => d.minute);
-            const values = data.data.map(d => d.cost_usd);
+            const values = data.data.map(d => ({
+                value: d.input_tokens + d.output_tokens,
+                total: d.input_tokens + d.output_tokens,
+                cost: d.cost_usd
+            }));
             chart.setOption({
                 xAxis: { data: times },
                 series: [{ data: values }]
@@ -165,12 +175,16 @@
         }
 
         function updateStats(data) {
-            document.getElementById('current-rate').textContent =
-                '$' + data.current_rate.toFixed(4) + '/min';
+            const lastData = data.data[data.data.length - 1];
+            const currentTokens = lastData ? lastData.input_tokens + lastData.output_tokens : 0;
+            document.getElementById('current-tokens').textContent =
+                currentTokens.toLocaleString();
+            document.getElementById('total-tokens').textContent =
+                (data.stats.total_input_tokens + data.stats.total_output_tokens).toLocaleString();
+            document.getElementById('peak-tokens').textContent =
+                data.stats.peak_tokens.toLocaleString();
             document.getElementById('total-cost').textContent =
                 '$' + data.stats.total_cost.toFixed(2);
-            document.getElementById('peak-rate').textContent =
-                '$' + data.stats.peak_rate.toFixed(4) + '/min';
         }
 
         async function refresh() {
