@@ -8,8 +8,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from brmonitor.config import CONFIG
+
 LITELLM_PRICING_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 _pricing_cache: dict[str, dict] = {}
+_upstream_cache: list[tuple[datetime, str]] = []
 
 
 @dataclass
@@ -22,6 +25,7 @@ class UsageEntry:
     output_tokens: int
     cache_creation_tokens: int
     cache_read_tokens: int
+    upstream: str
 
 
 def get_claude_data_dirs() -> list[Path]:
@@ -35,28 +39,51 @@ def get_claude_data_dirs() -> list[Path]:
     return dirs
 
 
-MODEL_PRICING = {
-    "claude-opus-4-5-20251101": {
-        "input": 5.0, "output": 25.0,
-        "cache_creation": 6.25, "cache_read": 0.5,
-    },
-    "claude-sonnet-4-20250514": {
-        "input": 3.0, "output": 15.0,
-        "cache_creation": 3.75, "cache_read": 0.3,
-    },
-    "claude-sonnet-4-5-20250929": {
-        "input": 3.0, "output": 15.0,
-        "cache_creation": 3.75, "cache_read": 0.3,
-    },
-    "claude-3-5-sonnet-20241022": {
-        "input": 3.0, "output": 15.0,
-        "cache_creation": 3.75, "cache_read": 0.3,
-    },
-    "claude-haiku-4-5-20251001": {
-        "input": 1.0, "output": 5.0,
-        "cache_creation": 1.25, "cache_read": 0.1,
-    },
-}
+def _load_upstream_log() -> list[tuple[datetime, str]]:
+    """加载upstream切换日志"""
+    global _upstream_cache
+    if _upstream_cache:
+        return _upstream_cache
+
+    log_path = Path(CONFIG.upstream_log)
+    if not log_path.exists():
+        return []
+
+    records: list[tuple[datetime, str]] = []
+    with open(log_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(",")
+            if len(parts) >= 3:
+                date_str = parts[0].strip()
+                time_str = parts[1].strip()
+                upstream = parts[2].strip()
+                try:
+                    dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+                    records.append((dt, upstream))
+                except ValueError:
+                    continue
+
+    records.sort(key=lambda x: x[0])
+    _upstream_cache = records
+    return records
+
+
+def _get_upstream_at_time(timestamp: datetime) -> str:
+    """根据时间获取当时使用的upstream"""
+    records = _load_upstream_log()
+    if not records:
+        return "official"
+
+    upstream = "official"
+    for dt, name in records:
+        if dt <= timestamp:
+            upstream = name
+        else:
+            break
+    return upstream
 
 
 def _fetch_litellm_pricing() -> dict[str, dict]:
@@ -87,8 +114,8 @@ def _get_model_pricing(model: str) -> dict:
             "cache_read": p.get("cache_read_input_token_cost", 0) * 1_000_000,
         }
 
-    if model in MODEL_PRICING:
-        return MODEL_PRICING[model]
+    if model in CONFIG.model_pricing:
+        return dict(CONFIG.model_pricing[model])
 
     return {"input": 3.0, "output": 15.0, "cache_creation": 3.75, "cache_read": 0.3}
 
@@ -139,14 +166,20 @@ def parse_jsonl_line(line: str) -> UsageEntry | None:
 
         utc_time = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
         timestamp = utc_time.astimezone().replace(tzinfo=None)
+
+        upstream = _get_upstream_at_time(timestamp)
+        rate = CONFIG.upstreams.get(upstream, {}).get("rate", 1.0)
+        actual_cost = cost_usd * rate
+
         entry = UsageEntry(
             timestamp=timestamp,
-            cost_usd=cost_usd,
+            cost_usd=actual_cost,
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_creation_tokens=cache_creation_tokens,
             cache_read_tokens=cache_read_tokens,
+            upstream=upstream,
         )
         return entry
     except (json.JSONDecodeError, ValueError, KeyError):
