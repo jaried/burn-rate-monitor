@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,13 +14,16 @@ from brmonitor.config import CONFIG
 LITELLM_PRICING_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 _pricing_cache: dict[str, dict] = {}
 _upstream_cache: list[tuple[datetime, str]] = []
+_upstream_cache_time: float = 0
 
 
 @dataclass
 class UsageEntry:
     """JSONL使用记录"""
+
     timestamp: datetime
     cost_usd: float
+    original_cost_usd: float
     model: str
     input_tokens: int
     output_tokens: int
@@ -39,10 +43,14 @@ def get_claude_data_dirs() -> list[Path]:
     return dirs
 
 
+UPSTREAM_CACHE_TTL = 30
+
+
 def _load_upstream_log() -> list[tuple[datetime, str]]:
     """加载upstream切换日志"""
-    global _upstream_cache
-    if _upstream_cache:
+    global _upstream_cache, _upstream_cache_time
+    now = time.time()
+    if _upstream_cache and (now - _upstream_cache_time) < UPSTREAM_CACHE_TTL:
         return _upstream_cache
 
     log_path = Path(CONFIG.upstream_log)
@@ -57,17 +65,17 @@ def _load_upstream_log() -> list[tuple[datetime, str]]:
                 continue
             parts = line.split(",")
             if len(parts) >= 3:
-                date_str = parts[0].strip()
-                time_str = parts[1].strip()
-                upstream = parts[2].strip()
+                datetime_str = parts[0].strip()
+                upstream = parts[-1].strip()
                 try:
-                    dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+                    dt = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
                     records.append((dt, upstream))
                 except ValueError:
                     continue
 
     records.sort(key=lambda x: x[0])
     _upstream_cache = records
+    _upstream_cache_time = now
     return records
 
 
@@ -160,8 +168,11 @@ def parse_jsonl_line(line: str) -> UsageEntry | None:
         cost_usd = data.get("costUSD")
         if cost_usd is None:
             cost_usd = _calculate_cost(
-                model, input_tokens, output_tokens,
-                cache_creation_tokens, cache_read_tokens,
+                model,
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
             )
 
         utc_time = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
@@ -174,6 +185,7 @@ def parse_jsonl_line(line: str) -> UsageEntry | None:
         entry = UsageEntry(
             timestamp=timestamp,
             cost_usd=actual_cost,
+            original_cost_usd=cost_usd,
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,

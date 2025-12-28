@@ -10,33 +10,41 @@ from brmonitor.data_loader import UsageEntry
 @dataclass
 class ModelData:
     """模型聚合数据"""
+
     model: str
     cost_usd: float
+    original_cost_usd: float
     input_tokens: int
     output_tokens: int
     cache_creation_tokens: int
     cache_read_tokens: int
     count: int
+    upstream: str
 
 
 @dataclass
 class MinuteData:
     """分钟聚合数据"""
+
     minute: str
     timestamp: datetime
     cost_usd: float
+    original_cost_usd: float
     input_tokens: int
     output_tokens: int
     cache_creation_tokens: int
     cache_read_tokens: int
     count: int
     models: list[ModelData]
+    upstream: str
 
 
 @dataclass
 class Stats:
     """统计信息"""
+
     total_cost: float
+    original_total_cost: float
     total_input_tokens: int
     total_output_tokens: int
     total_cache_creation_tokens: int
@@ -51,34 +59,40 @@ class Stats:
 @dataclass
 class BurnRateResponse:
     """API响应数据"""
+
     current_rate: float
     data: list[MinuteData]
     stats: Stats
 
 
 def _aggregate_models(entries: list[UsageEntry]) -> list[ModelData]:
-    """按模型聚合数据"""
-    model_map: dict[str, ModelData] = {}
+    """按模型+upstream聚合数据"""
+    model_map: dict[tuple[str, str], ModelData] = {}
     for entry in entries:
         model = entry.model or "unknown"
-        if model in model_map:
-            model_map[model].cost_usd += entry.cost_usd
-            model_map[model].input_tokens += entry.input_tokens
-            model_map[model].output_tokens += entry.output_tokens
-            model_map[model].cache_creation_tokens += entry.cache_creation_tokens
-            model_map[model].cache_read_tokens += entry.cache_read_tokens
-            model_map[model].count += 1
+        upstream = entry.upstream or "official"
+        key = (model, upstream)
+        if key in model_map:
+            model_map[key].cost_usd += entry.cost_usd
+            model_map[key].original_cost_usd += entry.original_cost_usd
+            model_map[key].input_tokens += entry.input_tokens
+            model_map[key].output_tokens += entry.output_tokens
+            model_map[key].cache_creation_tokens += entry.cache_creation_tokens
+            model_map[key].cache_read_tokens += entry.cache_read_tokens
+            model_map[key].count += 1
         else:
             model_data = ModelData(
                 model=model,
                 cost_usd=entry.cost_usd,
+                original_cost_usd=entry.original_cost_usd,
                 input_tokens=entry.input_tokens,
                 output_tokens=entry.output_tokens,
                 cache_creation_tokens=entry.cache_creation_tokens,
                 cache_read_tokens=entry.cache_read_tokens,
                 count=1,
+                upstream=upstream,
             )
-            model_map[model] = model_data
+            model_map[key] = model_data
     result = sorted(model_map.values(), key=lambda x: x.cost_usd, reverse=True)
     return result
 
@@ -110,16 +124,22 @@ def aggregate_by_minute(entries: list[UsageEntry]) -> list[MinuteData]:
     for minute_key, data in minute_map.items():
         entries_in_minute = data["entries"]
         models = _aggregate_models(entries_in_minute)
+        upstreams = {e.upstream for e in entries_in_minute}
+        upstream = upstreams.pop() if len(upstreams) == 1 else "mixed"
         minute_data = MinuteData(
             minute=data["minute"],
             timestamp=data["timestamp"],
             cost_usd=sum(e.cost_usd for e in entries_in_minute),
+            original_cost_usd=sum(e.original_cost_usd for e in entries_in_minute),
             input_tokens=sum(e.input_tokens for e in entries_in_minute),
             output_tokens=sum(e.output_tokens for e in entries_in_minute),
-            cache_creation_tokens=sum(e.cache_creation_tokens for e in entries_in_minute),
+            cache_creation_tokens=sum(
+                e.cache_creation_tokens for e in entries_in_minute
+            ),
             cache_read_tokens=sum(e.cache_read_tokens for e in entries_in_minute),
             count=len(entries_in_minute),
             models=models,
+            upstream=upstream,
         )
         result.append(minute_data)
 
@@ -140,6 +160,7 @@ def calculate_stats(data: list[MinuteData]) -> Stats:
     if not data:
         stats = Stats(
             total_cost=0.0,
+            original_total_cost=0.0,
             total_input_tokens=0,
             total_output_tokens=0,
             total_cache_creation_tokens=0,
@@ -153,6 +174,7 @@ def calculate_stats(data: list[MinuteData]) -> Stats:
         return stats
 
     total_cost = sum(d.cost_usd for d in data)
+    original_total_cost = sum(d.original_cost_usd for d in data)
     total_input_tokens = sum(d.input_tokens for d in data)
     total_output_tokens = sum(d.output_tokens for d in data)
     total_cache_creation_tokens = sum(d.cache_creation_tokens for d in data)
@@ -165,30 +187,35 @@ def calculate_stats(data: list[MinuteData]) -> Stats:
         for d in data
     )
 
-    model_map: dict[str, ModelData] = {}
+    model_map: dict[tuple[str, str], ModelData] = {}
     for minute_data in data:
         for m in minute_data.models:
-            if m.model in model_map:
-                model_map[m.model].cost_usd += m.cost_usd
-                model_map[m.model].input_tokens += m.input_tokens
-                model_map[m.model].output_tokens += m.output_tokens
-                model_map[m.model].cache_creation_tokens += m.cache_creation_tokens
-                model_map[m.model].cache_read_tokens += m.cache_read_tokens
-                model_map[m.model].count += m.count
+            key = (m.model, m.upstream)
+            if key in model_map:
+                model_map[key].cost_usd += m.cost_usd
+                model_map[key].original_cost_usd += m.original_cost_usd
+                model_map[key].input_tokens += m.input_tokens
+                model_map[key].output_tokens += m.output_tokens
+                model_map[key].cache_creation_tokens += m.cache_creation_tokens
+                model_map[key].cache_read_tokens += m.cache_read_tokens
+                model_map[key].count += m.count
             else:
-                model_map[m.model] = ModelData(
+                model_map[key] = ModelData(
                     model=m.model,
                     cost_usd=m.cost_usd,
+                    original_cost_usd=m.original_cost_usd,
                     input_tokens=m.input_tokens,
                     output_tokens=m.output_tokens,
                     cache_creation_tokens=m.cache_creation_tokens,
                     cache_read_tokens=m.cache_read_tokens,
                     count=m.count,
+                    upstream=m.upstream,
                 )
     models = sorted(model_map.values(), key=lambda x: x.cost_usd, reverse=True)
 
     stats = Stats(
         total_cost=total_cost,
+        original_total_cost=original_total_cost,
         total_input_tokens=total_input_tokens,
         total_output_tokens=total_output_tokens,
         total_cache_creation_tokens=total_cache_creation_tokens,
@@ -232,9 +259,14 @@ def _find_current_block_start(entries: list[UsageEntry]) -> datetime | None:
             continue
 
         time_since_block_start = entry_time - current_block_start
-        time_since_last_entry = entry_time - last_entry_time if last_entry_time else timedelta(0)
+        time_since_last_entry = (
+            entry_time - last_entry_time if last_entry_time else timedelta(0)
+        )
 
-        if time_since_block_start > session_duration or time_since_last_entry > session_duration:
+        if (
+            time_since_block_start > session_duration
+            or time_since_last_entry > session_duration
+        ):
             current_block_start = _floor_to_hour(entry_time)
 
         last_entry_time = entry_time

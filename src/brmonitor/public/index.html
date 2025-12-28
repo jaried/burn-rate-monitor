@@ -85,6 +85,11 @@
             font-size: 12px;
             color: #333;
         }
+        .model-upstream {
+            font-size: 10px;
+            color: #999;
+            margin-left: 4px;
+        }
         .model-stats {
             font-size: 11px;
             color: #999;
@@ -134,6 +139,10 @@
             <div class="label">总费用</div>
             <div class="value" id="total-cost">$0.00</div>
         </div>
+        <div class="stat-card">
+            <div class="label">折扣前</div>
+            <div class="value" id="original-cost">$0.00</div>
+        </div>
     </div>
     <div class="chart-container">
         <div id="chart"></div>
@@ -161,10 +170,36 @@
             'claude-3-5-sonnet-20241022': '#ec4899'
         };
 
+        const UPSTREAM_STYLES = {
+            'official': { opacity: 1.0, dash: [] },
+            '2api': { opacity: 0.8, dash: [5, 3] },
+            'droid': { opacity: 0.6, dash: [2, 2] },
+            'claude': { opacity: 0.7, dash: [8, 4] },
+            'azure': { opacity: 0.7, dash: [4, 4] }
+        };
+
         const chartOption = {
             backgroundColor: 'transparent',
             tooltip: {
-                trigger: 'axis'
+                trigger: 'axis',
+                formatter: function(params) {
+                    if (!params || !params.length) return '';
+                    const minute = params[0].axisValue;
+                    const dataIndex = params[0].dataIndex;
+                    let html = '<b>' + minute + '</b>';
+                    const upstream = window._upstreamData && window._upstreamData[dataIndex];
+                    if (upstream) {
+                        html += ' <span style="color:#999">(' + upstream + ')</span>';
+                    }
+                    html += '<br/>';
+                    params.forEach(p => {
+                        if (p.value > 0) {
+                            html += '<span style="color:' + p.color + '">●</span> ' +
+                                p.seriesName + ': ' + p.value.toLocaleString() + '<br/>';
+                        }
+                    });
+                    return html;
+                }
             },
             legend: {
                 data: [],
@@ -214,31 +249,42 @@
 
             const times = [];
             const filledData = [];
+            const upstreamData = [];
             for (let t = new Date(firstTime); t <= lastTime; t.setMinutes(t.getMinutes() + 1)) {
                 const hh = String(t.getHours()).padStart(2, '0');
                 const mm = String(t.getMinutes()).padStart(2, '0');
                 const minute = hh + ':' + mm;
                 times.push(minute);
-                filledData.push(dataMap[minute] || null);
+                const d = dataMap[minute] || null;
+                filledData.push(d);
+                upstreamData.push(d ? d.upstream : null);
             }
+            window._upstreamData = upstreamData;
 
-            // 收集所有模型
-            const modelSet = new Set();
+            // 收集所有(模型, upstream)组合
+            const comboSet = new Set();
             data.data.forEach(d => {
-                (d.models || []).forEach(m => modelSet.add(m.model));
+                (d.models || []).forEach(m => {
+                    comboSet.add(m.model + '|' + (m.upstream || 'official'));
+                });
             });
-            const models = Array.from(modelSet);
+            const combos = Array.from(comboSet);
 
-            if (!models.length) {
+            if (!combos.length) {
                 return;
             }
 
-            const series = models.map(model => {
-                const color = MODEL_COLORS[model] || '#999';
-                const name = model.replace('claude-', '').replace(/-\d{8}$/, '');
+            const series = combos.map(combo => {
+                const [model, upstream] = combo.split('|');
+                const baseColor = MODEL_COLORS[model] || '#999';
+                const style = UPSTREAM_STYLES[upstream] || { opacity: 1.0, dash: [] };
+                const shortName = model.replace('claude-', '').replace(/-\d{8}$/, '');
+                const name = shortName + '(' + upstream + ')';
                 const values = filledData.map(d => {
                     if (!d) return 0;
-                    const m = (d.models || []).find(x => x.model === model);
+                    const m = (d.models || []).find(x =>
+                        x.model === model && (x.upstream || 'official') === upstream
+                    );
                     if (!m) return 0;
                     return m.input_tokens + m.output_tokens +
                         (m.cache_creation_tokens || 0) + (m.cache_read_tokens || 0);
@@ -248,8 +294,13 @@
                     type: 'line',
                     data: values,
                     smooth: true,
-                    lineStyle: { color: color, width: 2 },
-                    itemStyle: { color: color }
+                    lineStyle: {
+                        color: baseColor,
+                        width: 2,
+                        opacity: style.opacity,
+                        type: style.dash.length ? style.dash : 'solid'
+                    },
+                    itemStyle: { color: baseColor, opacity: style.opacity }
                 };
             });
 
@@ -278,6 +329,8 @@
                 data.stats.peak_tokens.toLocaleString();
             document.getElementById('total-cost').textContent =
                 '$' + data.stats.total_cost.toFixed(2);
+            document.getElementById('original-cost').textContent =
+                '$' + (data.stats.original_total_cost || 0).toFixed(2);
             updateModels(data.stats.models || []);
         }
 
@@ -291,8 +344,10 @@
                 const tokens = m.input_tokens + m.output_tokens +
                     (m.cache_creation_tokens || 0) + (m.cache_read_tokens || 0);
                 const name = m.model.replace('claude-', '').replace(/-\d{8}$/, '');
+                const upstream = m.upstream || 'official';
                 return '<div class="model-item">' +
                     '<span class="model-name">' + name + '</span>' +
+                    '<span class="model-upstream">(' + upstream + ')</span>' +
                     '<span class="model-stats">' + tokens.toLocaleString() + ' / $' + m.cost_usd.toFixed(2) + '</span>' +
                     '</div>';
             }).join('');

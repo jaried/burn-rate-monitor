@@ -58,6 +58,7 @@ def _serialize_minute_data(d: dict) -> dict:
         result["timestamp"] = result["timestamp"].isoformat()
     return result
 
+
 PUBLIC_DIR = Path(__file__).parent / "public"
 
 
