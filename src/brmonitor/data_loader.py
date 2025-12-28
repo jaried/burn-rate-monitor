@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+LITELLM_PRICING_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+_pricing_cache: dict[str, dict] = {}
 
 
 @dataclass
@@ -33,10 +37,14 @@ def get_claude_data_dirs() -> list[Path]:
 
 MODEL_PRICING = {
     "claude-opus-4-5-20251101": {
-        "input": 15.0, "output": 75.0,
-        "cache_creation": 18.75, "cache_read": 1.5,
+        "input": 5.0, "output": 25.0,
+        "cache_creation": 6.25, "cache_read": 0.5,
     },
     "claude-sonnet-4-20250514": {
+        "input": 3.0, "output": 15.0,
+        "cache_creation": 3.75, "cache_read": 0.3,
+    },
+    "claude-sonnet-4-5-20250929": {
         "input": 3.0, "output": 15.0,
         "cache_creation": 3.75, "cache_read": 0.3,
     },
@@ -44,11 +52,49 @@ MODEL_PRICING = {
         "input": 3.0, "output": 15.0,
         "cache_creation": 3.75, "cache_read": 0.3,
     },
+    "claude-haiku-4-5-20251001": {
+        "input": 0.8, "output": 4.0,
+        "cache_creation": 1.0, "cache_read": 0.08,
+    },
     "claude-3-5-haiku-20241022": {
         "input": 0.8, "output": 4.0,
         "cache_creation": 1.0, "cache_read": 0.08,
     },
 }
+
+
+def _fetch_litellm_pricing() -> dict[str, dict]:
+    """从LiteLLM获取定价数据"""
+    global _pricing_cache
+    if _pricing_cache:
+        return _pricing_cache
+
+    try:
+        with urllib.request.urlopen(LITELLM_PRICING_URL, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            _pricing_cache = data
+            return data
+    except Exception:
+        return {}
+
+
+def _get_model_pricing(model: str) -> dict:
+    """获取模型定价，优先从LiteLLM获取"""
+    litellm_data = _fetch_litellm_pricing()
+
+    if model in litellm_data:
+        p = litellm_data[model]
+        return {
+            "input": p.get("input_cost_per_token", 0) * 1_000_000,
+            "output": p.get("output_cost_per_token", 0) * 1_000_000,
+            "cache_creation": p.get("cache_creation_input_token_cost", 0) * 1_000_000,
+            "cache_read": p.get("cache_read_input_token_cost", 0) * 1_000_000,
+        }
+
+    if model in MODEL_PRICING:
+        return MODEL_PRICING[model]
+
+    return {"input": 3.0, "output": 15.0, "cache_creation": 3.75, "cache_read": 0.3}
 
 
 def _calculate_cost(
@@ -59,13 +105,12 @@ def _calculate_cost(
     cache_read_tokens: int = 0,
 ) -> float:
     """根据模型和token数计算成本"""
-    default_pricing = {"input": 3.0, "output": 15.0, "cache_creation": 3.75, "cache_read": 0.3}
-    pricing = MODEL_PRICING.get(model, default_pricing)
+    pricing = _get_model_pricing(model)
     cost = (
         input_tokens * pricing["input"]
         + output_tokens * pricing["output"]
-        + cache_creation_tokens * pricing.get("cache_creation", pricing["input"] * 1.25)
-        + cache_read_tokens * pricing.get("cache_read", pricing["input"] * 0.1)
+        + cache_creation_tokens * pricing.get("cache_creation", 0)
+        + cache_read_tokens * pricing.get("cache_read", 0)
     ) / 1_000_000
     return cost
 
