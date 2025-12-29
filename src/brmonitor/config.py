@@ -6,6 +6,8 @@ from dot_dict import DotDict
 CONFIG = DotDict(
     {
         "upstream_log": "C:/Users/Tony/.claude/upstream.log",
+        "pricing_history_log": "C:/Users/Tony/.claude/pricing_history.log",
+        "upstream_rate_history_log": "C:/Users/Tony/.claude/upstream_rate_history.log",
         "upstreams": {
             "official": {"rate": 1.0, "name": "官网"},
             "claude": {"rate": 6.0, "name": "中转官方"},
